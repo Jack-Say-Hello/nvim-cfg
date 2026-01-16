@@ -2,6 +2,13 @@
 -- Default options that are always set: https://github.com/LazyVim/LazyVim/blob/main/lua/lazyvim/config/options.lua
 -- Add any additional options here
 --
+
+-- Use AI completion via completion engine (blink.cmp) instead of copilot.lua inline suggestions.
+-- Reason:
+--   Keep one unified completion UI/behavior (blink menu).
+vim.g.ai_cmp = true
+
+
 local opt = vim.opt
 
 -- 你原来：set mouse= （最终是关闭鼠标）
@@ -20,7 +27,7 @@ opt.ignorecase = true
 
 -- tab/空格可视化
 opt.list = true
-opt.listchars = { tab = "->", trail = "-" }
+opt.listchars = { tab = ">>", trail = "-" }
 --
 
 
