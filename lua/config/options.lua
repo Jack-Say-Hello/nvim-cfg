@@ -75,3 +75,11 @@ vim.g.autoformat = false
 --   Neovim can use a global statusline (laststatus=3), which shows only one line for all splits.
 --   You prefer per-split statuslines so each window shows its own buffer info.
 vim.o.laststatus = 2
+
+
+-- Reason: wrap long lines visually into multiple screen lines
+vim.opt.wrap = true
+
+-- Reason: prefer absolute line numbers (Vim habit), disable relative numbers
+vim.opt.number = true
+vim.opt.relativenumber = false
