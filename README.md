@@ -50,7 +50,7 @@ showmount -e host-ip
 sudo mount host-ip:/host-dir-pwd gust-mount-dir
 ```
 
-
+### 1.3 ubuntu 交换 esc与capslock
 ```
-
+dconf write /org/gnome/desktop/input-sources/xkb-options "['caps:swapescape']"
 ```
