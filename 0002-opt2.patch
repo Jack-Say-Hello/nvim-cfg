@@ -1,0 +1,287 @@
+From 7777bbcdc95e49c4f24070d365ecfaefd3eb8b79 Mon Sep 17 00:00:00 2001
+From: Liang Jie <buaajxlj@163.com>
+Date: Fri, 20 Mar 2026 16:14:36 +0800
+Subject: [PATCH 2/3] opt2
+
+---
+ .../service/CredentialService.java            | 128 ++++++++----------
+ src/main/resources/application.properties     |   1 +
+ src/main/resources/logback-spring.xml         |  55 ++++++++
+ 3 files changed, 111 insertions(+), 73 deletions(-)
+ create mode 100644 src/main/resources/logback-spring.xml
+
+diff --git a/src/main/java/com/query_credential/credential_query/service/CredentialService.java b/src/main/java/com/query_credential/credential_query/service/CredentialService.java
+index b111b14..72197d9 100644
+--- a/src/main/java/com/query_credential/credential_query/service/CredentialService.java
++++ b/src/main/java/com/query_credential/credential_query/service/CredentialService.java
+@@ -7,9 +7,6 @@ import java.util.concurrent.TimeUnit;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.cache.annotation.CacheEvict;
+-import org.springframework.cache.annotation.CachePut;
+-import org.springframework.cache.annotation.Cacheable;
+ import org.springframework.data.redis.core.RedisTemplate;
+ import org.springframework.stereotype.Service;
+ 
+@@ -19,120 +16,105 @@ import com.query_credential.credential_query.repository.CredentialRepository;
+ 
+ @Service
+ public class CredentialService {
+-    
++
+     private static final Logger logger = LoggerFactory.getLogger(CredentialService.class);
+-    
++
+     @Autowired
+     private CredentialRepository credentialRepository;
+-    
++
+     @Autowired
+     private RedisTemplate<String, Object> redisTemplate;
+-    
++
+     private static final String CACHE_KEY_PREFIX = "credential:";
+-    private static final long CACHE_EXPIRE_HOURS = 24;  // 缓存24小时
+-    
++    private static final long CACHE_EXPIRE_HOURS = 1;          // 正常结果缓存1小时
++    private static final long CACHE_NULL_EXPIRE_MINUTES = 5;   // 空结果缓存5分钟，防穿透
++
+     /**
+-     * 查询凭证信息，带缓存
++     * 查询凭证信息，带缓存穿透防护
++     * - 200 结果：缓存1小时
++     * - 404 结果：缓存5分钟短TTL，防止同一个无效sn反复打到数据库
++     * - 500 错误：不缓存
+      */
+-    @Cacheable(value = "credentialCache", key = "#sn")
+     public CredentialResponse queryCredentialBySn(String sn) {
++        String cacheKey = CACHE_KEY_PREFIX + sn;
++
++        // 1. 查缓存
++        try {
++            CredentialResponse cachedResponse = (CredentialResponse) redisTemplate.opsForValue().get(cacheKey);
++            if (cachedResponse != null) {
++                return cachedResponse;
++            }
++        } catch (Exception e) {
++            logger.warn("Redis读取失败，降级查库: {}", e.getMessage());
++        }
++
+         logger.info("缓存未命中，查询数据库: {}", sn);
+-        
++
++        // 2. 查数据库
+         try {
+             Optional<Credential> credentialOpt = credentialRepository.findBySn(sn);
+-            
++
+             if (credentialOpt.isPresent()) {
+                 Credential credential = credentialOpt.get();
+                 String status = calculateCredentialStatus(credential);
+-                
++
+                 CredentialResponse response = new CredentialResponse(
+-                    200, "Credential found", 
+-                    credential.getSn(), 
+-                    credential.getCert(), 
++                    200, "Credential found",
++                    credential.getSn(),
++                    credential.getCert(),
+                     status
+                 );
+-                
+-                logger.info("数据库查询成功，序列号: {}", sn);
++
++                // 正常结果缓存1小时
++                setCacheQuietly(cacheKey, response, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+                 return response;
+             } else {
+                 CredentialResponse response = new CredentialResponse(404, "Credential not found");
+                 logger.warn("凭证未找到，序列号: {}", sn);
++
++                // 空结果缓存5分钟，防止穿透
++                setCacheQuietly(cacheKey, response, CACHE_NULL_EXPIRE_MINUTES, TimeUnit.MINUTES);
+                 return response;
+             }
+-            
++
+         } catch (Exception e) {
+             logger.error("查询凭证失败，序列号: {}, 错误: {}", sn, e.getMessage());
++            // 500 错误不缓存，下次请求可以重试
+             return new CredentialResponse(500, "Query error: " + e.getMessage());
+         }
+     }
+-    
++
+     /**
+-     * 手动缓存实现（备选方案）
++     * 写缓存，Redis异常时静默降级，不影响主流程
+      */
+-    public CredentialResponse queryCredentialBySnWithManualCache(String sn) {
+-        String cacheKey = CACHE_KEY_PREFIX + sn;
+-        
++    private void setCacheQuietly(String key, CredentialResponse response, long timeout, TimeUnit unit) {
+         try {
+-            // 1. 先查缓存
+-            CredentialResponse cachedResponse = (CredentialResponse) redisTemplate.opsForValue().get(cacheKey);
+-            if (cachedResponse != null) {
+-                logger.info("缓存命中，序列号: {}", sn);
+-                return cachedResponse;
+-            }
+-            
+-            logger.info("缓存未命中，查询数据库: {}", sn);
+-            
+-            // 2. 查询数据库
+-            Optional<Credential> credentialOpt = credentialRepository.findBySn(sn);
+-            
+-            CredentialResponse response;
+-            if (credentialOpt.isPresent()) {
+-                Credential credential = credentialOpt.get();
+-                String status = calculateCredentialStatus(credential);
+-                response = new CredentialResponse(200, "Credential found", 
+-                    credential.getSn(), credential.getCert(), status);
+-            } else {
+-                response = new CredentialResponse(404, "Credential not found");
+-            }
+-            
+-            // 3. 写入缓存
+-            if (response.getStatusCode() == 200) {  // 只缓存成功结果
+-                redisTemplate.opsForValue().set(cacheKey, response, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+-                logger.info("数据已缓存，序列号: {}", sn);
+-            }
+-            
+-            return response;
+-            
++            redisTemplate.opsForValue().set(key, response, timeout, unit);
+         } catch (Exception e) {
+-            logger.error("查询凭证失败，序列号: {}, 错误: {}", sn, e.getMessage());
+-            return new CredentialResponse(500, "Query error: " + e.getMessage());
++            logger.warn("Redis写入失败: {}", e.getMessage());
+         }
+     }
+-    
++
+     /**
+      * 清除缓存
+      */
+-    @CacheEvict(value = "credentialCache", key = "#sn")
+     public void evictCredentialCache(String sn) {
+-        logger.info("清除缓存，序列号: {}", sn);
+-    }
+-    
+-    /**
+-     * 更新缓存
+-     */
+-    @CachePut(value = "credentialCache", key = "#sn")
+-    public CredentialResponse updateCredentialCache(String sn, CredentialResponse response) {
+-        logger.info("更新缓存，序列号: {}", sn);
+-        return response;
++        String cacheKey = CACHE_KEY_PREFIX + sn;
++        try {
++            redisTemplate.delete(cacheKey);
++            logger.info("清除缓存，序列号: {}", sn);
++        } catch (Exception e) {
++            logger.warn("清除缓存失败，序列号: {}, 错误: {}", sn, e.getMessage());
++        }
+     }
+-    
++
+     /**
+      * 计算凭证状态
+      */
+     private String calculateCredentialStatus(Credential credential) {
+         LocalDateTime currentTime = LocalDateTime.now();
+         String status = "Valid";
+-        
++
+         if (currentTime.isBefore(credential.getValidityStart())) {
+             status = "NotStarted";
+         } else if (currentTime.isAfter(credential.getValidityEnd())) {
+@@ -140,7 +122,7 @@ public class CredentialService {
+         } else if ("revoked".equalsIgnoreCase(credential.getStatus())) {
+             status = "Revoked";
+         }
+-        
++
+         return status;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index 0ab0cb7..bf1f3f1 100644
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -36,6 +36,7 @@ spring.cache.redis.use-key-prefix=true
+ # ===============================
+ # JPA \u914D\u7F6E
+ # ===============================
++spring.jpa.open-in-view=false
+ spring.jpa.hibernate.ddl-auto=validate
+ spring.jpa.show-sql=false
+ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+diff --git a/src/main/resources/logback-spring.xml b/src/main/resources/logback-spring.xml
+new file mode 100644
+index 0000000..a2a03d1
+--- /dev/null
++++ b/src/main/resources/logback-spring.xml
+@@ -0,0 +1,55 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<configuration>
++
++    <!-- 实际的控制台输出 appender -->
++    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
++        <encoder>
++            <pattern>%d{yyyy-MM-dd HH:mm:ss} - %msg%n</pattern>
++        </encoder>
++    </appender>
++
++    <!-- 异步包裹，日志写入不阻塞业务线程 -->
++    <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
++        <!-- 队列容量，默认256，高并发下需要加大 -->
++        <queueSize>1024</queueSize>
++        <!-- 队列剩余容量低于此值时丢弃 TRACE/DEBUG/INFO 日志，0 表示永不丢弃 -->
++        <discardingThreshold>0</discardingThreshold>
++        <!-- 不提取调用者信息，避免每次日志都生成堆栈（性能关键） -->
++        <includeCallerData>false</includeCallerData>
++        <!-- 队列满时不阻塞业务线程，直接丢弃 -->
++        <neverBlock>true</neverBlock>
++        <appender-ref ref="CONSOLE"/>
++    </appender>
++
++    <!-- 文件输出 appender（生产环境建议使用） -->
++    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
++        <file>logs/credential-query.log</file>
++        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
++            <fileNamePattern>logs/credential-query.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
++            <maxFileSize>100MB</maxFileSize>
++            <maxHistory>7</maxHistory>
++            <totalSizeCap>1GB</totalSizeCap>
++        </rollingPolicy>
++        <encoder>
++            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
++        </encoder>
++    </appender>
++
++    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
++        <queueSize>1024</queueSize>
++        <discardingThreshold>0</discardingThreshold>
++        <includeCallerData>false</includeCallerData>
++        <neverBlock>true</neverBlock>
++        <appender-ref ref="FILE"/>
++    </appender>
++
++    <logger name="com.query_credential" level="INFO"/>
++    <logger name="org.springframework" level="WARN"/>
++    <logger name="org.hibernate" level="ERROR"/>
++
++    <root level="INFO">
++        <appender-ref ref="ASYNC_CONSOLE"/>
++        <appender-ref ref="ASYNC_FILE"/>
++    </root>
++
++</configuration>
+-- 
+2.39.5 (Apple Git-154)
+

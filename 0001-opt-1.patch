@@ -1,0 +1,84 @@
+From d711034bc07df1eb997bbee1f80ddad483fb0f83 Mon Sep 17 00:00:00 2001
+From: Liang Jie <buaajxlj@163.com>
+Date: Fri, 20 Mar 2026 16:10:58 +0800
+Subject: [PATCH 1/3] opt-1
+
+---
+ .../controller/CredentialController.java         | 16 ++++++++++------
+ src/main/resources/application.properties        | 11 +++++++++--
+ 2 files changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/src/main/java/com/query_credential/credential_query/controller/CredentialController.java b/src/main/java/com/query_credential/credential_query/controller/CredentialController.java
+index ca163e6..cefa104 100644
+--- a/src/main/java/com/query_credential/credential_query/controller/CredentialController.java
++++ b/src/main/java/com/query_credential/credential_query/controller/CredentialController.java
+@@ -1,5 +1,7 @@
+ package com.query_credential.credential_query.controller;
+ 
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.http.ResponseEntity;
+ import org.springframework.web.bind.annotation.DeleteMapping;
+@@ -14,19 +16,21 @@ import com.query_credential.credential_query.service.CredentialService;
+ @RestController
+ @RequestMapping("/api")
+ public class CredentialController {
+-    
++
++    private static final Logger logger = LoggerFactory.getLogger(CredentialController.class);
++
+     @Autowired
+     private CredentialService credentialService;
+-    
++
+     @GetMapping("/query_credential/{sn}")
+     public ResponseEntity<CredentialResponse> queryCredential(@PathVariable String sn) {
+         long startTime = System.currentTimeMillis();
+-        
++
+         CredentialResponse response = credentialService.queryCredentialBySn(sn);
+-        
++
+         long endTime = System.currentTimeMillis();
+-        System.out.println("查询耗时: " + (endTime - startTime) + "ms");
+-        
++        logger.info("查询耗时: {}ms, sn: {}", endTime - startTime, sn);
++
+         return ResponseEntity.status(response.getStatusCode()).body(response);
+     }
+     
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index 0949642..0ab0cb7 100644
+--- a/src/main/resources/application.properties
++++ b/src/main/resources/application.properties
+@@ -6,6 +6,13 @@ spring.datasource.username=root
+ spring.datasource.password=!QAZ2wsx
+ spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+ 
++# HikariCP 连接池配置
++spring.datasource.hikari.maximum-pool-size=50
++spring.datasource.hikari.minimum-idle=20
++spring.datasource.hikari.connection-timeout=3000
++spring.datasource.hikari.idle-timeout=60000
++spring.datasource.hikari.max-lifetime=1800000
++
+ # Redis 配置
+ spring.redis.host=localhost
+ spring.redis.port=6379
+@@ -30,10 +37,10 @@ spring.cache.redis.use-key-prefix=true
+ # JPA \u914D\u7F6E
+ # ===============================
+ spring.jpa.hibernate.ddl-auto=validate
+-spring.jpa.show-sql=true
++spring.jpa.show-sql=false
+ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+ spring.jpa.properties.hibernate.jdbc.time_zone=Asia/Shanghai
+-spring.jpa.properties.hibernate.format_sql=true
++spring.jpa.properties.hibernate.format_sql=false
+ 
+ # ===============================
+ # \u670D\u52A1\u5668\u914D\u7F6E
+-- 
+2.39.5 (Apple Git-154)
+
