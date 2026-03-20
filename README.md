@@ -27,6 +27,15 @@ sudo apt install fd-find
 sudo apt install libglib2.0-bin
 ```
 
+4. Snacks: No supported finder found
+```
+sudo apt install fd-find
+```
+
+# 交换 Caps Lock 和 Esc
+```
+setxkbmap -option caps:swapescape
+```
 
 # 🧰 SKILL
 
